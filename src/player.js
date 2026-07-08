@@ -58,8 +58,12 @@ function folder(path) {
   scanFolder();
 }
 
-// message "sourceid <n>"
-function sourceid(n) { CONFIG.sourceId = n; }
+// message "sourceid <n>" : index de la source Holophonix pour cette instance (/track/n).
+// Pousse par un parametre Live (live.numbox) propre a chaque instance, y compris au chargement.
+function sourceid(n) {
+  CONFIG.sourceId = Math.round(n);
+  if (oscDebug) { post("player: sourceId = " + CONFIG.sourceId + " (/track/" + CONFIG.sourceId + ")\n"); }
+}
 
 // message "gap <ms>"
 function gap(ms) { CONFIG.gapMs = ms; }
