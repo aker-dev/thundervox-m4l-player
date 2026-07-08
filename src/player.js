@@ -162,6 +162,7 @@ function findSpeaker(id) {
 function start() {
   if (files.length === 0) { post("player: rien a jouer\n"); return; }
   playing = true;
+  if (oscDebug) { post("seq: start\n"); }
   playNext();
 }
 
@@ -184,12 +185,16 @@ function playNext() {
   lastFileIndex = fi;
 
   // Position : snap sur une enceinte tiree au hasard (sans repetition immediate)
+  var spId = -1;
   if (speakers.length > 0) {
     var si = pickIndex(speakers.length, lastSpeakerIndex);
     lastSpeakerIndex = si;
     var sp = speakers[si];
     sendPosition(sp.x, sp.y, sp.z);
+    spId = sp.id;
   }
+
+  if (oscDebug) { post("seq: play [" + fi + "] -> enceinte " + spId + "\n"); }
 
   // Lecture one-shot du fichier
   playFile(files[fi]);
@@ -197,6 +202,7 @@ function playNext() {
 
 // fin de lecture signalee par sfplay~ : message "done"
 function done() {
+  if (oscDebug) { post("seq: done recu (playing=" + playing + ")\n"); }
   if (!playing) return;
   // Reutiliser une seule Task : ne pas en creer une par message, elles persistent
   // jusqu'a invalidation ou reload du script et fuiraient sinon.
