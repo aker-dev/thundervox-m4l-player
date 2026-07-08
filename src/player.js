@@ -150,6 +150,14 @@ function dumpspeakers() {
   }
 }
 
+// Retrouve une enceinte par son id (numerotation Holophonix), ou null si absente.
+function findSpeaker(id) {
+  for (var i = 0; i < speakers.length; i++) {
+    if (speakers[i].id === id) { return speakers[i]; }
+  }
+  return null;
+}
+
 // ----- SEQUENCE -----
 function start() {
   if (files.length === 0) { post("player: rien a jouer\n"); return; }
@@ -195,6 +203,20 @@ function done() {
 function sendPosition(x, y, z) {
   var addr = CONFIG.addrSourceXyz.replace("%ID%", CONFIG.sourceId);
   outlet(1, addr, x, y, z);   // udpsend empaquette en OSC
+}
+
+// ----- TEST (etape 2) -----
+// message "testspeaker <id>" : pose la source /track/{sourceId} sur l'enceinte d'id donne.
+// Sert a verifier le snap : viser une enceinte doit deplacer le point source dessus.
+function testspeaker(id) {
+  var sp = findSpeaker(id);
+  if (!sp) {
+    post("player: enceinte " + id + " inconnue (lance rescan d'abord)\n");
+    return;
+  }
+  sendPosition(sp.x, sp.y, sp.z);
+  post("player: source /track/" + CONFIG.sourceId + " -> enceinte " + id +
+       " (" + sp.x + " " + sp.y + " " + sp.z + ")\n");
 }
 
 // ----- UTIL -----
