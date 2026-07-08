@@ -171,6 +171,12 @@ function stop() {
   outlet(0, "stop");
 }
 
+// Lecture one-shot d'un fichier par sfplay~ (outlet 0 : "open <path>" puis 1).
+function playFile(path) {
+  outlet(0, "open", path);
+  outlet(0, 1);
+}
+
 function playNext() {
   if (!playing || files.length === 0) return;
 
@@ -186,8 +192,7 @@ function playNext() {
   }
 
   // Lecture one-shot du fichier
-  outlet(0, "open", files[fi]);
-  outlet(0, 1);
+  playFile(files[fi]);
 }
 
 // fin de lecture signalee par sfplay~ : message "done"
@@ -217,6 +222,12 @@ function testspeaker(id) {
   sendPosition(sp.x, sp.y, sp.z);
   post("player: source /track/" + CONFIG.sourceId + " -> enceinte " + id +
        " (" + sp.x + " " + sp.y + " " + sp.z + ")\n");
+}
+
+// message "testplay" : joue le premier fichier du dossier (verification etape 3).
+function testplay() {
+  if (files.length === 0) { post("player: aucun fichier (folder puis rescan ?)\n"); return; }
+  playFile(files[0]);
 }
 
 // ----- UTIL -----
