@@ -42,13 +42,14 @@ var lastFileIndex = -1;
 var lastSpeakerIndex = -1;
 var playing = false;
 var gapTask = null;
-var oscDebug = 1;            // 1 = log le trafic OSC dans la fenetre Max (instrumentation etape 1)
+var oscDebug = 0;            // logs de debug (OSC + sequence) dans la console Max. Bascule a chaud via message "verbose 1" / "verbose 0".
 
 // ----- INIT -----
 function loadbang() { init(); }
 
 function init() {
-  scanFolder();
+  // Au chargement : on interroge les enceintes. Le dossier est defini plus tard par l'UI
+  // (message folder), donc rien a scanner ici.
   requestSpeakers();
 }
 
@@ -67,6 +68,12 @@ function sourceid(n) {
 
 // message "gap <ms>"
 function gap(ms) { CONFIG.gapMs = ms; }
+
+// message "verbose <0|1>" : active/coupe les logs de debug (OSC + sequence).
+function verbose(n) {
+  oscDebug = (n ? 1 : 0);
+  post("player: verbose = " + oscDebug + "\n");
+}
 
 // message "rescan"
 function rescan() { scanFolder(); requestSpeakers(); }
@@ -164,7 +171,9 @@ function findSpeaker(id) {
 
 // ----- SEQUENCE -----
 function start() {
-  if (files.length === 0) { post("player: rien a jouer\n"); return; }
+  if (playing) { post("player: deja en lecture\n"); return; }
+  if (files.length === 0) { post("player: rien a jouer (dossier vide ?)\n"); return; }
+  if (speakers.length === 0) { post("player: attention, aucune enceinte (lance rescan) - lecture sans positionnement\n"); }
   playing = true;
   if (oscDebug) { post("seq: start\n"); }
   playNext();
