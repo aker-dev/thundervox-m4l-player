@@ -28,6 +28,7 @@ var CONFIG = {
   sourceId: 1,               // index de la source mono Holophonix : /track/{sourceId}
   folder: "",                // chemin du dossier de messages (mp3), passe par message "folder"
   gapMs: 2000,               // silence entre deux messages
+  autostart: 0,              // 1 = la sequence suit le transport Live (Play -> start, Stop -> stop)
   maxSpeakers: 16,           // on interroge les enceintes 1..maxSpeakers et on garde celles qui repondent (Holophonix Native va jusqu'a 16)
   // Prefixes OSC confirmes via aker-dev/holophonix_export (source /track, enceinte /speaker).
   // Sous-adresse de position (xyz) a verifier dans la fenetre OSC Status de Holophonix.
@@ -45,12 +46,16 @@ var gapTask = null;
 var oscDebug = 0;            // logs de debug (OSC + sequence) dans la console Max. Bascule a chaud via message "verbose 1" / "verbose 0".
 
 // ----- INIT -----
-function loadbang() { init(); }
+// loadbang : interroge les enceintes au chargement du patch (best-effort).
+function loadbang() { requestSpeakers(); }
 
-function init() {
-  // Au chargement : on interroge les enceintes. Le dossier est defini plus tard par l'UI
-  // (message folder), donc rien a scanner ici.
+// message "loaded" : declenche par live.thisdevice quand le device est charge et pret.
+// Plus fiable que loadbang pour le contexte Live (LiveAPI) et le reseau : on (re)interroge
+// les enceintes et on met en place l'observation du transport.
+function loaded() {
+  if (oscDebug) { post("loaded: device pret\n"); }
   requestSpeakers();
+  watchTransport();
 }
 
 // message "folder <chemin>" depuis l'UI du patch
@@ -221,6 +226,35 @@ function done() {
   // jusqu'a invalidation ou reload du script et fuiraient sinon.
   if (!gapTask) { gapTask = new Task(playNext, this); }
   gapTask.schedule(CONFIG.gapMs);
+}
+
+// ----- AUTOSTART (suit le transport Live) -----
+// Quand autostart est actif, la sequence suit le transport Live : Play -> start, Stop -> stop.
+// Etat de lecture observe via LiveAPI (is_playing du live_set). Sans autostart, le transport
+// ne pilote pas la sequence (on garde les boutons start/stop manuels).
+var transportApi = null;
+
+// message "autostart <0|1>" depuis un parametre Live (live.toggle), propre a chaque instance.
+function autostart(n) {
+  CONFIG.autostart = n ? 1 : 0;
+  if (oscDebug) { post("player: autostart = " + CONFIG.autostart + "\n"); }
+}
+
+// Observe l'etat de lecture du transport. Cree une seule fois (au chargement via loaded()).
+function watchTransport() {
+  if (transportApi) return;
+  transportApi = new LiveAPI(onTransport, "live_set");
+  transportApi.property = "is_playing";
+  if (oscDebug) { post("watchTransport: observation is_playing en place\n"); }
+}
+
+// callback LiveAPI : is_playing a change. L'observation passe un tableau ["is_playing", valeur].
+function onTransport(args) {
+  if (oscDebug) { post("transport cb: [" + args + "]\n"); }
+  if (!CONFIG.autostart) return;
+  var playingNow = (args && args.length >= 2) ? args[1] : args;
+  if (playingNow == 1) { start(); }
+  else if (playingNow == 0) { stop(); }
 }
 
 // ----- OSC POSITION -----
