@@ -27,7 +27,8 @@ outlets = 3;
 var CONFIG = {
   sourceId: 1,               // index de la source mono Holophonix : /track/{sourceId}
   folder: "",                // chemin du dossier de messages (mp3), passe par message "folder"
-  gapMs: 2000,               // silence entre deux messages
+  gapMinMs: 1000,            // gap minimum entre deux messages (ms) ; regle en secondes via l'UI
+  gapMaxMs: 4000,            // gap maximum ; a chaque message on tire un gap aleatoire dans [min, max]
   autostart: 0,              // 1 = la sequence suit le transport Live (Play -> start, Stop -> stop)
   maxSpeakers: 16,           // on interroge les enceintes 1..maxSpeakers et on garde celles qui repondent (Holophonix Native va jusqu'a 16)
   // Prefixes OSC confirmes via aker-dev/holophonix_export (source /track, enceinte /speaker).
@@ -70,13 +71,15 @@ function sourceid(n) {
   if (oscDebug) { post("player: sourceId = " + CONFIG.sourceId + " (/track/" + CONFIG.sourceId + ")\n"); }
 }
 
-// message "gap <ms>"
-function gap(ms) { CONFIG.gapMs = ms; }
-
-// message "gapsec <s>" : temps entre deux messages en secondes (parametre Live). Converti en ms.
-function gapsec(s) {
-  CONFIG.gapMs = Math.max(0, Math.round(s * 1000));
-  if (oscDebug) { post("player: gap = " + CONFIG.gapMs + " ms\n"); }
+// messages "gapmin <s>" / "gapmax <s>" : bornes du gap entre messages, en secondes (parametres Live).
+// A chaque message on tire un gap aleatoire dans [gapMinMs, gapMaxMs].
+function gapmin(s) {
+  CONFIG.gapMinMs = Math.max(0, Math.round(s * 1000));
+  if (oscDebug) { post("player: gap min = " + CONFIG.gapMinMs + " ms\n"); }
+}
+function gapmax(s) {
+  CONFIG.gapMaxMs = Math.max(0, Math.round(s * 1000));
+  if (oscDebug) { post("player: gap max = " + CONFIG.gapMaxMs + " ms\n"); }
 }
 
 // message "verbose <0|1>" : active/coupe les logs de debug (OSC + sequence).
@@ -258,7 +261,9 @@ function done() {
   // Reutiliser une seule Task : ne pas en creer une par message, elles persistent
   // jusqu'a invalidation ou reload du script et fuiraient sinon.
   if (!gapTask) { gapTask = new Task(playNext, this); }
-  gapTask.schedule(CONFIG.gapMs);
+  var g = randomGapMs();
+  if (oscDebug) { post("seq: gap " + g + " ms\n"); }
+  gapTask.schedule(g);
 }
 
 // ----- AUTOSTART (suit le transport Live) -----
@@ -327,6 +332,13 @@ function testplay() {
 }
 
 // ----- UTIL -----
+// tire un gap aleatoire (ms) dans [gapMinMs, gapMaxMs], bornes remises dans l'ordre si besoin.
+function randomGapMs() {
+  var lo = CONFIG.gapMinMs, hi = CONFIG.gapMaxMs;
+  if (hi < lo) { var t = lo; lo = hi; hi = t; }
+  return Math.round(lo + Math.random() * (hi - lo));
+}
+
 // tirage d'un index different du precedent
 function pickIndex(n, last) {
   if (n <= 1) return 0;
