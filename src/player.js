@@ -14,11 +14,13 @@
 // ci-dessous restent en assignation simple, c'est l'idiome Max attendu.
 autowatch = 1;
 inlets = 1;
-outlets = 3;
+outlets = 5;
 // Outlets (a cabler dans le patch) :
-//   0 -> sfplay~     : messages "open <path>", puis 1 pour jouer, "stop" pour arreter
-//   1 -> udpsend     : messages OSC vers Holophonix (adresse puis arguments)
-//   2 -> statut/debug : optionnel (umenu, comment...)
+//   0 -> sfplay~           : messages "open <path>", puis 1 pour jouer, "stop" pour arreter
+//   1 -> udpsend           : messages OSC vers Holophonix (adresse puis arguments)
+//   2 -> afficheur statut  : "set <texte>" vers un comment (nb fichiers, enceintes, lecture...)
+//   3 -> afficheur dossier : "set <nom>" vers un comment (nom du dossier courant)
+//   4 -> toggle Play       : "set 0/1" pour resynchroniser le live.toggle avec l'etat reel
 
 // ----- CONFIG (valeurs a caler) -----
 // Repere Holophonix, XYZ en metres. Pas de swap d'axes ici : on lit les enceintes et on
@@ -42,7 +44,7 @@ var files = [];              // chemins des fichiers du dossier
 var speakers = [];           // [{id, x, y, z}] table des enceintes (remplie par OSC /get)
 var lastFileIndex = -1;
 var lastSpeakerId = -1;      // id de la derniere enceinte utilisee (evite la repetition immediate)
-var enabledSpeakers = [];    // [16] booleens : enceintes cochees (index 0..15 = enceintes 1..16), via matrixctrl
+var enabledSpeakers = [];    // [16] booleens : enceintes cochees (index 0..15 = enceintes 1..16), via 16 live.toggle
 var playing = false;
 var gapTask = null;
 var oscDebug = 0;            // logs de debug (OSC + sequence + transport) dans la console Max. Bascule a chaud via "verbose 1" / "verbose 0".
@@ -61,6 +63,7 @@ function loaded() {
 // message "folder <chemin>" depuis l'UI du patch
 function folder(path) {
   CONFIG.folder = path;
+  outlet(3, "set", basename(path));   // afficheur dossier (UI)
   scanFolder();
 }
 
@@ -105,6 +108,7 @@ function scanFolder() {
   }
   f.close();
   post("player: " + files.length + " fichiers trouves\n");
+  updateStatus();
 }
 
 // ----- ENCEINTES (recuperation OSC /get) -----
@@ -148,6 +152,7 @@ function anything() {
     var id = parseInt(parts[2], 10);
     if (!isNaN(id) && vals.length >= 3) {
       storeSpeaker(id, vals[0], vals[1], vals[2]);
+      updateStatus();
     }
   }
 }
@@ -213,13 +218,34 @@ function pickSpeaker(list) {
   return sp;
 }
 
+// ----- UI (afficheurs, outlets 2/3/4) -----
+// Ligne de statut envoyee a un comment via l'outlet 2 (nb fichiers, enceintes, lecture, enceinte courante).
+function updateStatus() {
+  var s = files.length + " msg | " + speakers.length + " enc";
+  if (playing) {
+    s += " | lecture";
+    if (lastSpeakerId > 0) { s += " enc " + lastSpeakerId; }
+  } else {
+    s += " | arrete";
+  }
+  outlet(2, "set", s);
+}
+
+// Dernier segment d'un chemin (nom du dossier), sans slash final.
+function basename(path) {
+  var p = ("" + path).replace(/\/+$/, "").split("/");
+  return p[p.length - 1] || ("" + path);
+}
+
 // ----- SEQUENCE -----
 function start() {
   if (playing) { post("player: deja en lecture\n"); return; }
-  if (files.length === 0) { post("player: rien a jouer (dossier vide ?)\n"); return; }
-  if (eligibleSpeakers().length === 0) { post("player: aucune enceinte cochee/disponible - coche au moins une enceinte\n"); return; }
+  if (files.length === 0) { post("player: rien a jouer (dossier vide ?)\n"); outlet(4, "set", 0); return; }
+  if (eligibleSpeakers().length === 0) { post("player: aucune enceinte cochee/disponible - coche au moins une enceinte\n"); outlet(4, "set", 0); return; }
   playing = true;
+  outlet(4, "set", 1);       // resync toggle Play
   if (oscDebug) { post("seq: start\n"); }
+  updateStatus();
   playNext();
 }
 
@@ -227,6 +253,8 @@ function stop() {
   playing = false;
   if (gapTask) { gapTask.cancel(); gapTask = null; }
   outlet(0, "stop");
+  outlet(4, "set", 0);       // resync toggle Play
+  updateStatus();
 }
 
 // Lecture one-shot d'un fichier par sfplay~ (outlet 0 : "open <path>" puis 1).
@@ -247,6 +275,7 @@ function playNext() {
 
   var sp = pickSpeaker(elig);
   sendPosition(sp.x, sp.y, sp.z);
+  updateStatus();            // enceinte courante
 
   if (oscDebug) { post("seq: play [" + fi + "] -> enceinte " + sp.id + "\n"); }
 
