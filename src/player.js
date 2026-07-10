@@ -14,13 +14,14 @@
 // ci-dessous restent en assignation simple, c'est l'idiome Max attendu.
 autowatch = 1;
 inlets = 1;
-outlets = 5;
+outlets = 6;
 // Outlets (a cabler dans le patch) :
 //   0 -> sfplay~           : messages "open <path>", puis 1 pour jouer, "stop" pour arreter
 //   1 -> udpsend           : messages OSC vers Holophonix (adresse puis arguments)
-//   2 -> afficheur statut  : "set <texte>" vers un comment (nb fichiers, enceintes, lecture...)
-//   3 -> afficheur dossier : "set <nom>" vers un comment (nom du dossier courant)
+//   2 -> afficheur statut  : "set <texte>" vers un message box (nb fichiers, enceintes, lecture...)
+//   3 -> afficheur dossier : "set <nom>" vers un message box (nom du dossier courant)
 //   4 -> toggle Play       : "set 0/1" pour resynchroniser le live.toggle avec l'etat reel
+//   5 -> pattr dossier     : chemin du dossier (derive du fichier depose sur live.drop), a memoriser
 
 // ----- CONFIG (valeurs a caler) -----
 // Repere Holophonix, XYZ en metres. Pas de swap d'axes ici : on lit les enceintes et on
@@ -60,11 +61,25 @@ function loaded() {
   watchTransport();
 }
 
-// message "folder <chemin>" depuis l'UI du patch
+// message "folder <chemin>" depuis l'UI du patch (via le pattr sosfolder)
 function folder(path) {
   CONFIG.folder = path;
   outlet(3, "set", basename(path));   // afficheur dossier (UI)
   scanFolder();
+}
+
+// message "dropfile <path>" depuis live.drop : on charge le DOSSIER du fichier depose.
+// live.drop ne prend qu'un fichier (pas un dossier) : on remonte a son dossier parent.
+function dropfile() {
+  var a = arrayfromargs(arguments);
+  var p = "";
+  for (var i = 0; i < a.length; i++) {
+    if (("" + a[i]).indexOf("/") >= 0) { p = "" + a[i]; break; }  // l'atome qui ressemble a un chemin
+  }
+  if (!p && a.length) { p = "" + a[a.length - 1]; }
+  var dir = dirname(p);
+  if (oscDebug) { post("player: dossier depose = " + dir + "\n"); }
+  if (dir) { outlet(5, dir); }         // -> pattr sosfolder (memorise) -> folder()
 }
 
 // message "sourceid <n>" : index de la source Holophonix pour cette instance (/track/n).
@@ -221,12 +236,12 @@ function pickSpeaker(list) {
 // ----- UI (afficheurs, outlets 2/3/4) -----
 // Ligne de statut envoyee a un comment via l'outlet 2 (nb fichiers, enceintes, lecture, enceinte courante).
 function updateStatus() {
-  var s = files.length + " msg | " + speakers.length + " enc";
+  var s = files.length + " files | " + speakers.length + " spk";
   if (playing) {
-    s += " | lecture";
-    if (lastSpeakerId > 0) { s += " enc " + lastSpeakerId; }
+    s += " | playing";
+    if (lastSpeakerId > 0) { s += " spk " + lastSpeakerId; }
   } else {
-    s += " | arrete";
+    s += " | idle";
   }
   outlet(2, "set", s);
 }
@@ -235,6 +250,13 @@ function updateStatus() {
 function basename(path) {
   var p = ("" + path).replace(/\/+$/, "").split("/");
   return p[p.length - 1] || ("" + path);
+}
+
+// Dossier parent d'un chemin de fichier (tout sauf le dernier segment).
+function dirname(path) {
+  var p = ("" + path).replace(/\/+$/, "").split("/");
+  p.pop();
+  return p.join("/");
 }
 
 // ----- SEQUENCE -----
