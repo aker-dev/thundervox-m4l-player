@@ -43,17 +43,15 @@ var lastFileIndex = -1;
 var lastSpeakerIndex = -1;
 var playing = false;
 var gapTask = null;
-var oscDebug = 0;            // logs de debug (OSC + sequence) dans la console Max. Bascule a chaud via message "verbose 1" / "verbose 0".
+var oscDebug = 0;            // logs de debug (OSC + sequence + transport) dans la console Max. Bascule a chaud via "verbose 1" / "verbose 0".
 
 // ----- INIT -----
-// loadbang : interroge les enceintes au chargement du patch (best-effort).
-function loadbang() { requestSpeakers(); }
-
-// message "loaded" : declenche par live.thisdevice quand le device est charge et pret.
-// Plus fiable que loadbang pour le contexte Live (LiveAPI) et le reseau : on (re)interroge
-// les enceintes et on met en place l'observation du transport.
+// message "loaded" : declenche par live.thisdevice quand le device est charge et pret. En M4L c'est
+// le hook de chargement fiable (contexte Live pour LiveAPI, reseau OSC) : on interroge les enceintes
+// et on met en place l'observation du transport. (loadbang non utilise : moins fiable ici.)
 function loaded() {
   if (oscDebug) { post("loaded: device pret\n"); }
+  stop();                    // etat propre a l'ouverture : la sequence ne demarre pas toute seule
   requestSpeakers();
   watchTransport();
 }
@@ -233,6 +231,7 @@ function done() {
 // Etat de lecture observe via LiveAPI (is_playing du live_set). Sans autostart, le transport
 // ne pilote pas la sequence (on garde les boutons start/stop manuels).
 var transportApi = null;
+var lastPlaying = -1;       // -1 = pas encore initialise ; on ignore le 1er etat rapporte au chargement
 
 // message "autostart <0|1>" depuis un parametre Live (live.toggle), propre a chaque instance.
 function autostart(n) {
@@ -243,18 +242,27 @@ function autostart(n) {
 // Observe l'etat de lecture du transport. Cree une seule fois (au chargement via loaded()).
 function watchTransport() {
   if (transportApi) return;
+  lastPlaying = -1;
   transportApi = new LiveAPI(onTransport, "live_set");
   transportApi.property = "is_playing";
   if (oscDebug) { post("watchTransport: observation is_playing en place\n"); }
 }
 
-// callback LiveAPI : is_playing a change. L'observation passe un tableau ["is_playing", valeur].
+// callback LiveAPI. On ne traite QUE "is_playing" : LiveAPI envoie aussi une notif ["id", <id>]
+// a la mise en place, a ignorer (sinon on prend le nombre de l'id pour un Play). Et on ignore le
+// 1er etat is_playing rapporte au chargement, pour ne pas demarrer la sequence a l'ouverture du Set.
 function onTransport(args) {
-  if (oscDebug) { post("transport cb: [" + args + "]\n"); }
+  if (!args || args[0] !== "is_playing") {
+    if (oscDebug) { post("transport cb (ignore): [" + args + "]\n"); }
+    return;
+  }
+  var playingNow = (args[1] == 1) ? 1 : 0;
+  if (oscDebug) { post("transport cb: is_playing=" + playingNow + " (last " + lastPlaying + ")\n"); }
+  if (lastPlaying === -1) { lastPlaying = playingNow; return; }   // etat initial au chargement : memorise sans agir
+  if (playingNow === lastPlaying) return;                          // pas de vrai changement
+  lastPlaying = playingNow;
   if (!CONFIG.autostart) return;
-  var playingNow = (args && args.length >= 2) ? args[1] : args;
-  if (playingNow == 1) { start(); }
-  else if (playingNow == 0) { stop(); }
+  if (playingNow === 1) { start(); } else { stop(); }
 }
 
 // ----- OSC POSITION -----
