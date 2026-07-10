@@ -40,7 +40,8 @@ var CONFIG = {
 var files = [];              // chemins des fichiers du dossier
 var speakers = [];           // [{id, x, y, z}] table des enceintes (remplie par OSC /get)
 var lastFileIndex = -1;
-var lastSpeakerIndex = -1;
+var lastSpeakerId = -1;      // id de la derniere enceinte utilisee (evite la repetition immediate)
+var enabledSpeakers = [];    // [16] booleens : enceintes cochees (index 0..15 = enceintes 1..16), via matrixctrl
 var playing = false;
 var gapTask = null;
 var oscDebug = 0;            // logs de debug (OSC + sequence + transport) dans la console Max. Bascule a chaud via "verbose 1" / "verbose 0".
@@ -71,6 +72,12 @@ function sourceid(n) {
 
 // message "gap <ms>"
 function gap(ms) { CONFIG.gapMs = ms; }
+
+// message "gapsec <s>" : temps entre deux messages en secondes (parametre Live). Converti en ms.
+function gapsec(s) {
+  CONFIG.gapMs = Math.max(0, Math.round(s * 1000));
+  if (oscDebug) { post("player: gap = " + CONFIG.gapMs + " ms\n"); }
+}
 
 // message "verbose <0|1>" : active/coupe les logs de debug (OSC + sequence).
 function verbose(n) {
@@ -172,11 +179,42 @@ function findSpeaker(id) {
   return null;
 }
 
+// ----- CIBLAGE (16 live.toggle -> pak -> "speakermask v1 .. v16") -----
+// enabledSpeakers[i] = enceinte (i+1) cochee.
+function speakermask() {
+  var m = arrayfromargs(arguments);
+  for (var i = 0; i < 16; i++) { enabledSpeakers[i] = (m[i] ? true : false); }
+  if (oscDebug) {
+    var on = [];
+    for (var j = 0; j < 16; j++) { if (enabledSpeakers[j]) { on.push(j + 1); } }
+    post("player: enceintes ciblees = " + (on.length ? on.join(",") : "aucune") + "\n");
+  }
+}
+
+// Enceintes eligibles : cochees ET presentes dans la table.
+function eligibleSpeakers() {
+  var out = [];
+  for (var i = 0; i < speakers.length; i++) {
+    if (enabledSpeakers[speakers[i].id - 1]) { out.push(speakers[i]); }
+  }
+  return out;
+}
+
+// Tire une enceinte au hasard dans la liste, differente de la derniere (sans repetition immediate).
+function pickSpeaker(list) {
+  var sp = list[Math.floor(Math.random() * list.length)];
+  if (list.length > 1) {
+    while (sp.id === lastSpeakerId) { sp = list[Math.floor(Math.random() * list.length)]; }
+  }
+  lastSpeakerId = sp.id;
+  return sp;
+}
+
 // ----- SEQUENCE -----
 function start() {
   if (playing) { post("player: deja en lecture\n"); return; }
   if (files.length === 0) { post("player: rien a jouer (dossier vide ?)\n"); return; }
-  if (speakers.length === 0) { post("player: attention, aucune enceinte (lance rescan) - lecture sans positionnement\n"); }
+  if (eligibleSpeakers().length === 0) { post("player: aucune enceinte cochee/disponible - coche au moins une enceinte\n"); return; }
   playing = true;
   if (oscDebug) { post("seq: start\n"); }
   playNext();
@@ -197,20 +235,17 @@ function playFile(path) {
 function playNext() {
   if (!playing || files.length === 0) return;
 
+  // Ciblage : uniquement les enceintes cochees et presentes. Aucune dispo -> on arrete.
+  var elig = eligibleSpeakers();
+  if (elig.length === 0) { post("player: plus d'enceinte cochee disponible - arret\n"); stop(); return; }
+
   var fi = pickIndex(files.length, lastFileIndex);
   lastFileIndex = fi;
 
-  // Position : snap sur une enceinte tiree au hasard (sans repetition immediate)
-  var spId = -1;
-  if (speakers.length > 0) {
-    var si = pickIndex(speakers.length, lastSpeakerIndex);
-    lastSpeakerIndex = si;
-    var sp = speakers[si];
-    sendPosition(sp.x, sp.y, sp.z);
-    spId = sp.id;
-  }
+  var sp = pickSpeaker(elig);
+  sendPosition(sp.x, sp.y, sp.z);
 
-  if (oscDebug) { post("seq: play [" + fi + "] -> enceinte " + spId + "\n"); }
+  if (oscDebug) { post("seq: play [" + fi + "] -> enceinte " + sp.id + "\n"); }
 
   // Lecture one-shot du fichier
   playFile(files[fi]);
