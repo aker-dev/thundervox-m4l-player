@@ -28,35 +28,37 @@ outlets = 6;
 // ecrit les sources directement en coords Holophonix. Le swap Rhino -> Holophonix (X_h = Y_r)
 // vit dans aker-dev/holophonix_export (fonction to_holophonix), pertinent seulement cote export.
 var CONFIG = {
-  sourceId: 1,               // index de la source mono Holophonix : /track/{sourceId}
-  folder: "",                // chemin du dossier de messages (mp3), passe par message "folder"
-  gapMinMs: 1000,            // gap minimum entre deux messages (ms) ; regle en secondes via l'UI
-  gapMaxMs: 4000,            // gap maximum ; a chaque message on tire un gap aleatoire dans [min, max]
-  autostart: 0,              // 1 = la sequence suit le transport Live (Play -> start, Stop -> stop)
-  maxSpeakers: 16,           // on interroge les enceintes 1..maxSpeakers et on garde celles qui repondent (Holophonix Native va jusqu'a 16)
+  sourceId: 1, // index de la source mono Holophonix : /track/{sourceId}
+  folder: "", // chemin du dossier de messages (mp3), passe par message "folder"
+  gapMinMs: 1000, // gap minimum entre deux messages (ms) ; regle en secondes via l'UI
+  gapMaxMs: 4000, // gap maximum ; a chaque message on tire un gap aleatoire dans [min, max]
+  autostart: 0, // 1 = la sequence suit le transport Live (Play -> start, Stop -> stop)
+  maxSpeakers: 16, // on interroge les enceintes 1..maxSpeakers et on garde celles qui repondent (Holophonix Native va jusqu'a 16)
   // Prefixes OSC confirmes via aker-dev/holophonix_export (source /track, enceinte /speaker).
   // Sous-adresse de position (xyz) a verifier dans la fenetre OSC Status de Holophonix.
-  addrSourceXyz: "/track/%ID%/xyz",     // position source, triplet complet
-  addrSpeakerXyz: "/speaker/%N%/xyz",   // position enceinte, lue via /get
+  addrSourceXyz: "/track/%ID%/xyz", // position source, triplet complet
+  addrSpeakerXyz: "/speaker/%N%/xyz", // position enceinte, lue via /get
 };
 
 // ----- ETAT -----
-var files = [];              // chemins des fichiers du dossier
-var speakers = [];           // [{id, x, y, z}] table des enceintes (remplie par OSC /get)
+var files = []; // chemins des fichiers du dossier
+var speakers = []; // [{id, x, y, z}] table des enceintes (remplie par OSC /get)
 var lastFileIndex = -1;
-var lastSpeakerId = -1;      // id de la derniere enceinte utilisee (evite la repetition immediate)
-var enabledSpeakers = [];    // [16] booleens : enceintes cochees (index 0..15 = enceintes 1..16), via 16 live.toggle
+var lastSpeakerId = -1; // id de la derniere enceinte utilisee (evite la repetition immediate)
+var enabledSpeakers = []; // [16] booleens : enceintes cochees (index 0..15 = enceintes 1..16), via 16 live.toggle
 var playing = false;
 var gapTask = null;
-var oscDebug = 0;            // logs de debug (OSC + sequence + transport) dans la console Max. Bascule a chaud via "verbose 1" / "verbose 0".
+var oscDebug = 0; // logs de debug (OSC + sequence + transport) dans la console Max. Bascule a chaud via "verbose 1" / "verbose 0".
 
 // ----- INIT -----
 // message "loaded" : declenche par live.thisdevice quand le device est charge et pret. En M4L c'est
 // le hook de chargement fiable (contexte Live pour LiveAPI, reseau OSC) : on interroge les enceintes
 // et on met en place l'observation du transport. (loadbang non utilise : moins fiable ici.)
 function loaded() {
-  if (oscDebug) { post("loaded: device pret\n"); }
-  stop();                    // etat propre a l'ouverture : la sequence ne demarre pas toute seule
+  if (oscDebug) {
+    post("loaded: device pret\n");
+  }
+  stop(); // etat propre a l'ouverture : la sequence ne demarre pas toute seule
   requestSpeakers();
   watchTransport();
 }
@@ -64,7 +66,7 @@ function loaded() {
 // message "folder <chemin>" depuis l'UI du patch (via le pattr sosfolder)
 function folder(path) {
   CONFIG.folder = path;
-  outlet(3, "set", basename(path));   // afficheur dossier (UI)
+  outlet(3, "set", basename(path)); // afficheur dossier (UI)
   scanFolder();
 }
 
@@ -74,45 +76,72 @@ function dropfile() {
   var a = arrayfromargs(arguments);
   var p = "";
   for (var i = 0; i < a.length; i++) {
-    if (("" + a[i]).indexOf("/") >= 0) { p = "" + a[i]; break; }  // l'atome qui ressemble a un chemin
+    if (("" + a[i]).indexOf("/") >= 0) {
+      p = "" + a[i];
+      break;
+    } // l'atome qui ressemble a un chemin
   }
-  if (!p && a.length) { p = "" + a[a.length - 1]; }
+  if (!p && a.length) {
+    p = "" + a[a.length - 1];
+  }
   var dir = dirname(p);
-  if (oscDebug) { post("player: dossier depose = " + dir + "\n"); }
-  if (dir) { outlet(5, dir); }         // -> pattr sosfolder (memorise) -> folder()
+  if (oscDebug) {
+    post("player: dossier depose = " + dir + "\n");
+  }
+  if (dir) {
+    outlet(5, dir);
+  } // -> pattr sosfolder (memorise) -> folder()
 }
 
 // message "sourceid <n>" : index de la source Holophonix pour cette instance (/track/n).
 // Pousse par un parametre Live (live.numbox) propre a chaque instance, y compris au chargement.
 function sourceid(n) {
   CONFIG.sourceId = Math.round(n);
-  if (oscDebug) { post("player: sourceId = " + CONFIG.sourceId + " (/track/" + CONFIG.sourceId + ")\n"); }
+  if (oscDebug) {
+    post(
+      "player: sourceId = " +
+        CONFIG.sourceId +
+        " (/track/" +
+        CONFIG.sourceId +
+        ")\n",
+    );
+  }
 }
 
 // messages "gapmin <s>" / "gapmax <s>" : bornes du gap entre messages, en secondes (parametres Live).
 // A chaque message on tire un gap aleatoire dans [gapMinMs, gapMaxMs].
 function gapmin(s) {
   CONFIG.gapMinMs = Math.max(0, Math.round(s * 1000));
-  if (oscDebug) { post("player: gap min = " + CONFIG.gapMinMs + " ms\n"); }
+  if (oscDebug) {
+    post("player: gap min = " + CONFIG.gapMinMs + " ms\n");
+  }
 }
 function gapmax(s) {
   CONFIG.gapMaxMs = Math.max(0, Math.round(s * 1000));
-  if (oscDebug) { post("player: gap max = " + CONFIG.gapMaxMs + " ms\n"); }
+  if (oscDebug) {
+    post("player: gap max = " + CONFIG.gapMaxMs + " ms\n");
+  }
 }
 
 // message "verbose <0|1>" : active/coupe les logs de debug (OSC + sequence).
 function verbose(n) {
-  oscDebug = (n ? 1 : 0);
+  oscDebug = n ? 1 : 0;
   post("player: verbose = " + oscDebug + "\n");
 }
 
 // message "rescan"
-function rescan() { scanFolder(); requestSpeakers(); }
+function rescan() {
+  scanFolder();
+  requestSpeakers();
+}
 
 // ----- DOSSIER -----
 function scanFolder() {
   files = [];
-  if (!CONFIG.folder) { post("player: aucun dossier defini\n"); return; }
+  if (!CONFIG.folder) {
+    post("player: aucun dossier defini\n");
+    return;
+  }
   var f = new Folder(CONFIG.folder);
   while (!f.end) {
     var name = f.filename;
@@ -140,9 +169,15 @@ function requestSpeakers() {
   for (var i = 1; i <= CONFIG.maxSpeakers; i++) {
     var addr = CONFIG.addrSpeakerXyz.replace("%N%", i);
     outlet(1, "/get", addr);
-    if (oscDebug) { post("osc out: /get " + addr + "\n"); }
+    if (oscDebug) {
+      post("osc out: /get " + addr + "\n");
+    }
   }
-  post("player: /get envoye pour enceintes 1 a " + CONFIG.maxSpeakers + " (on garde celles qui repondent)\n");
+  post(
+    "player: /get envoye pour enceintes 1 a " +
+      CONFIG.maxSpeakers +
+      " (on garde celles qui repondent)\n",
+  );
 }
 
 // Reponses OSC entrantes (via udpreceive -> v8). udpreceive decode l'OSC : le selecteur est
@@ -150,18 +185,22 @@ function requestSpeakers() {
 // pas une fonction JS connue, donc Max route le message vers anything(), ou on parse l'adresse.
 // On evite ainsi un route/OSC-route cote patch.
 function anything() {
-  var addr = messagename;                 // ex "/speaker/1/xyz"
-  var vals = arrayfromargs(arguments);    // ex [2.0, 0.0, 1.5]
-  var parts = addr.split("/");            // "/speaker/1/xyz" -> ["", "speaker", "1", "xyz"]
+  var addr = messagename; // ex "/speaker/1/xyz"
+  var vals = arrayfromargs(arguments); // ex [2.0, 0.0, 1.5]
+  var parts = addr.split("/"); // "/speaker/1/xyz" -> ["", "speaker", "1", "xyz"]
 
   // Holophonix renvoie "/error ..." pour un index d'enceinte inexistant. Normal quand on sonde
   // 1..maxSpeakers au-dela du nombre reel : on le signale a part et on ignore (pas de fantome).
   if (parts[1] === "error") {
-    if (oscDebug) { post("osc err: " + vals.join(" ") + "\n"); }
+    if (oscDebug) {
+      post("osc err: " + vals.join(" ") + "\n");
+    }
     return;
   }
 
-  if (oscDebug) { post("osc in: " + addr + " [" + vals.join(", ") + "]\n"); }
+  if (oscDebug) {
+    post("osc in: " + addr + " [" + vals.join(", ") + "]\n");
+  }
 
   if (parts[1] === "speaker") {
     var id = parseInt(parts[2], 10);
@@ -177,7 +216,9 @@ function anything() {
 function storeSpeaker(id, x, y, z) {
   for (var i = 0; i < speakers.length; i++) {
     if (speakers[i].id === id) {
-      speakers[i].x = x; speakers[i].y = y; speakers[i].z = z;
+      speakers[i].x = x;
+      speakers[i].y = y;
+      speakers[i].z = z;
       return;
     }
   }
@@ -187,17 +228,23 @@ function storeSpeaker(id, x, y, z) {
 // Affiche la table des enceintes dans la fenetre Max (verification etape 1).
 function dumpspeakers() {
   post("speakers: " + speakers.length + " enceintes\n");
-  var sorted = speakers.slice().sort(function (a, b) { return a.id - b.id; });
+  var sorted = speakers.slice().sort(function (a, b) {
+    return a.id - b.id;
+  });
   for (var i = 0; i < sorted.length; i++) {
     var s = sorted[i];
-    post("  speaker " + s.id + " : x=" + s.x + " y=" + s.y + " z=" + s.z + "\n");
+    post(
+      "  speaker " + s.id + " : x=" + s.x + " y=" + s.y + " z=" + s.z + "\n",
+    );
   }
 }
 
 // Retrouve une enceinte par son id (numerotation Holophonix), ou null si absente.
 function findSpeaker(id) {
   for (var i = 0; i < speakers.length; i++) {
-    if (speakers[i].id === id) { return speakers[i]; }
+    if (speakers[i].id === id) {
+      return speakers[i];
+    }
   }
   return null;
 }
@@ -206,11 +253,21 @@ function findSpeaker(id) {
 // enabledSpeakers[i] = enceinte (i+1) cochee.
 function speakermask() {
   var m = arrayfromargs(arguments);
-  for (var i = 0; i < 16; i++) { enabledSpeakers[i] = (m[i] ? true : false); }
+  for (var i = 0; i < 16; i++) {
+    enabledSpeakers[i] = m[i] ? true : false;
+  }
   if (oscDebug) {
     var on = [];
-    for (var j = 0; j < 16; j++) { if (enabledSpeakers[j]) { on.push(j + 1); } }
-    post("player: enceintes ciblees = " + (on.length ? on.join(",") : "aucune") + "\n");
+    for (var j = 0; j < 16; j++) {
+      if (enabledSpeakers[j]) {
+        on.push(j + 1);
+      }
+    }
+    post(
+      "player: enceintes ciblees = " +
+        (on.length ? on.join(",") : "aucune") +
+        "\n",
+    );
   }
 }
 
@@ -218,7 +275,9 @@ function speakermask() {
 function eligibleSpeakers() {
   var out = [];
   for (var i = 0; i < speakers.length; i++) {
-    if (enabledSpeakers[speakers[i].id - 1]) { out.push(speakers[i]); }
+    if (enabledSpeakers[speakers[i].id - 1]) {
+      out.push(speakers[i]);
+    }
   }
   return out;
 }
@@ -227,7 +286,9 @@ function eligibleSpeakers() {
 function pickSpeaker(list) {
   var sp = list[Math.floor(Math.random() * list.length)];
   if (list.length > 1) {
-    while (sp.id === lastSpeakerId) { sp = list[Math.floor(Math.random() * list.length)]; }
+    while (sp.id === lastSpeakerId) {
+      sp = list[Math.floor(Math.random() * list.length)];
+    }
   }
   lastSpeakerId = sp.id;
   return sp;
@@ -239,7 +300,9 @@ function updateStatus() {
   var s = files.length + " files | " + speakers.length + " spk";
   if (playing) {
     s += " | playing";
-    if (lastSpeakerId > 0) { s += " spk " + lastSpeakerId; }
+    if (lastSpeakerId > 0) {
+      s += " spk " + lastSpeakerId;
+    }
   } else {
     s += " | idle";
   }
@@ -249,7 +312,7 @@ function updateStatus() {
 // Dernier segment d'un chemin (nom du dossier), sans slash final.
 function basename(path) {
   var p = ("" + path).replace(/\/+$/, "").split("/");
-  return p[p.length - 1] || ("" + path);
+  return p[p.length - 1] || "" + path;
 }
 
 // Dossier parent d'un chemin de fichier (tout sauf le dernier segment).
@@ -261,21 +324,39 @@ function dirname(path) {
 
 // ----- SEQUENCE -----
 function start() {
-  if (playing) { post("player: deja en lecture\n"); return; }
-  if (files.length === 0) { post("player: rien a jouer (dossier vide ?)\n"); outlet(4, "set", 0); return; }
-  if (eligibleSpeakers().length === 0) { post("player: aucune enceinte cochee/disponible - coche au moins une enceinte\n"); outlet(4, "set", 0); return; }
+  if (playing) {
+    post("player: deja en lecture\n");
+    return;
+  }
+  if (files.length === 0) {
+    post("player: rien a jouer (dossier vide ?)\n");
+    outlet(4, "set", 0);
+    return;
+  }
+  if (eligibleSpeakers().length === 0) {
+    post(
+      "player: aucune enceinte cochee/disponible - coche au moins une enceinte\n",
+    );
+    outlet(4, "set", 0);
+    return;
+  }
   playing = true;
-  outlet(4, "set", 1);       // resync toggle Play
-  if (oscDebug) { post("seq: start\n"); }
+  outlet(4, "set", 1); // resync toggle Play
+  if (oscDebug) {
+    post("seq: start\n");
+  }
   updateStatus();
   playNext();
 }
 
 function stop() {
   playing = false;
-  if (gapTask) { gapTask.cancel(); gapTask = null; }
+  if (gapTask) {
+    gapTask.cancel();
+    gapTask = null;
+  }
   outlet(0, "stop");
-  outlet(4, "set", 0);       // resync toggle Play
+  outlet(4, "set", 0); // resync toggle Play
   updateStatus();
 }
 
@@ -290,16 +371,22 @@ function playNext() {
 
   // Ciblage : uniquement les enceintes cochees et presentes. Aucune dispo -> on arrete.
   var elig = eligibleSpeakers();
-  if (elig.length === 0) { post("player: plus d'enceinte cochee disponible - arret\n"); stop(); return; }
+  if (elig.length === 0) {
+    post("player: plus d'enceinte cochee disponible - arret\n");
+    stop();
+    return;
+  }
 
   var fi = pickIndex(files.length, lastFileIndex);
   lastFileIndex = fi;
 
   var sp = pickSpeaker(elig);
   sendPosition(sp.x, sp.y, sp.z);
-  updateStatus();            // enceinte courante
+  updateStatus(); // enceinte courante
 
-  if (oscDebug) { post("seq: play [" + fi + "] -> enceinte " + sp.id + "\n"); }
+  if (oscDebug) {
+    post("seq: play [" + fi + "] -> enceinte " + sp.id + "\n");
+  }
 
   // Lecture one-shot du fichier
   playFile(files[fi]);
@@ -307,13 +394,19 @@ function playNext() {
 
 // fin de lecture signalee par sfplay~ : message "done"
 function done() {
-  if (oscDebug) { post("seq: done recu (playing=" + playing + ")\n"); }
+  if (oscDebug) {
+    post("seq: done recu (playing=" + playing + ")\n");
+  }
   if (!playing) return;
   // Reutiliser une seule Task : ne pas en creer une par message, elles persistent
   // jusqu'a invalidation ou reload du script et fuiraient sinon.
-  if (!gapTask) { gapTask = new Task(playNext, this); }
+  if (!gapTask) {
+    gapTask = new Task(playNext, this);
+  }
   var g = randomGapMs();
-  if (oscDebug) { post("seq: gap " + g + " ms\n"); }
+  if (oscDebug) {
+    post("seq: gap " + g + " ms\n");
+  }
   gapTask.schedule(g);
 }
 
@@ -322,12 +415,14 @@ function done() {
 // Etat de lecture observe via LiveAPI (is_playing du live_set). Sans autostart, le transport
 // ne pilote pas la sequence (on garde les boutons start/stop manuels).
 var transportApi = null;
-var lastPlaying = -1;       // -1 = pas encore initialise ; on ignore le 1er etat rapporte au chargement
+var lastPlaying = -1; // -1 = pas encore initialise ; on ignore le 1er etat rapporte au chargement
 
 // message "autostart <0|1>" depuis un parametre Live (live.toggle), propre a chaque instance.
 function autostart(n) {
   CONFIG.autostart = n ? 1 : 0;
-  if (oscDebug) { post("player: autostart = " + CONFIG.autostart + "\n"); }
+  if (oscDebug) {
+    post("player: autostart = " + CONFIG.autostart + "\n");
+  }
 }
 
 // Observe l'etat de lecture du transport. Cree une seule fois (au chargement via loaded()).
@@ -336,7 +431,9 @@ function watchTransport() {
   lastPlaying = -1;
   transportApi = new LiveAPI(onTransport, "live_set");
   transportApi.property = "is_playing";
-  if (oscDebug) { post("watchTransport: observation is_playing en place\n"); }
+  if (oscDebug) {
+    post("watchTransport: observation is_playing en place\n");
+  }
 }
 
 // callback LiveAPI. On ne traite QUE "is_playing" : LiveAPI envoie aussi une notif ["id", <id>]
@@ -344,22 +441,39 @@ function watchTransport() {
 // 1er etat is_playing rapporte au chargement, pour ne pas demarrer la sequence a l'ouverture du Set.
 function onTransport(args) {
   if (!args || args[0] !== "is_playing") {
-    if (oscDebug) { post("transport cb (ignore): [" + args + "]\n"); }
+    if (oscDebug) {
+      post("transport cb (ignore): [" + args + "]\n");
+    }
     return;
   }
-  var playingNow = (args[1] == 1) ? 1 : 0;
-  if (oscDebug) { post("transport cb: is_playing=" + playingNow + " (last " + lastPlaying + ")\n"); }
-  if (lastPlaying === -1) { lastPlaying = playingNow; return; }   // etat initial au chargement : memorise sans agir
-  if (playingNow === lastPlaying) return;                          // pas de vrai changement
+  var playingNow = args[1] == 1 ? 1 : 0;
+  if (oscDebug) {
+    post(
+      "transport cb: is_playing=" +
+        playingNow +
+        " (last " +
+        lastPlaying +
+        ")\n",
+    );
+  }
+  if (lastPlaying === -1) {
+    lastPlaying = playingNow;
+    return;
+  } // etat initial au chargement : memorise sans agir
+  if (playingNow === lastPlaying) return; // pas de vrai changement
   lastPlaying = playingNow;
   if (!CONFIG.autostart) return;
-  if (playingNow === 1) { start(); } else { stop(); }
+  if (playingNow === 1) {
+    start();
+  } else {
+    stop();
+  }
 }
 
 // ----- OSC POSITION -----
 function sendPosition(x, y, z) {
   var addr = CONFIG.addrSourceXyz.replace("%ID%", CONFIG.sourceId);
-  outlet(1, addr, x, y, z);   // udpsend empaquette en OSC
+  outlet(1, addr, x, y, z); // udpsend empaquette en OSC
 }
 
 // ----- TEST (etape 2) -----
@@ -372,21 +486,40 @@ function testspeaker(id) {
     return;
   }
   sendPosition(sp.x, sp.y, sp.z);
-  post("player: source /track/" + CONFIG.sourceId + " -> enceinte " + id +
-       " (" + sp.x + " " + sp.y + " " + sp.z + ")\n");
+  post(
+    "player: source /track/" +
+      CONFIG.sourceId +
+      " -> enceinte " +
+      id +
+      " (" +
+      sp.x +
+      " " +
+      sp.y +
+      " " +
+      sp.z +
+      ")\n",
+  );
 }
 
 // message "testplay" : joue le premier fichier du dossier (verification etape 3).
 function testplay() {
-  if (files.length === 0) { post("player: aucun fichier (folder puis rescan ?)\n"); return; }
+  if (files.length === 0) {
+    post("player: aucun fichier (folder puis rescan ?)\n");
+    return;
+  }
   playFile(files[0]);
 }
 
 // ----- UTIL -----
 // tire un gap aleatoire (ms) dans [gapMinMs, gapMaxMs], bornes remises dans l'ordre si besoin.
 function randomGapMs() {
-  var lo = CONFIG.gapMinMs, hi = CONFIG.gapMaxMs;
-  if (hi < lo) { var t = lo; lo = hi; hi = t; }
+  var lo = CONFIG.gapMinMs,
+    hi = CONFIG.gapMaxMs;
+  if (hi < lo) {
+    var t = lo;
+    lo = hi;
+    hi = t;
+  }
   return Math.round(lo + Math.random() * (hi - lo));
 }
 
