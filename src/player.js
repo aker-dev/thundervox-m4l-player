@@ -44,6 +44,7 @@ var CONFIG = {
 var files = []; // chemins des fichiers du dossier
 var speakers = []; // [{id, x, y, z}] table des enceintes (remplie par OSC /get)
 var lastFileIndex = -1;
+var playQueue = []; // indices restant a jouer dans le passage courant (sac melange) ; vide -> on re-melange
 var lastSpeakerId = -1; // id de la derniere enceinte utilisee (evite la repetition immediate)
 var enabledSpeakers = []; // [16] booleens : enceintes cochees (index 0..15 = enceintes 1..16), via 16 live.toggle
 var playing = false;
@@ -138,6 +139,8 @@ function rescan() {
 // ----- DOSSIER -----
 function scanFolder() {
   files = [];
+  playQueue = [];
+  lastFileIndex = -1; // nouveau dossier -> nouveau passage (indices repartent a neuf)
   if (!CONFIG.folder) {
     post("player: aucun dossier defini\n");
     return;
@@ -377,8 +380,8 @@ function playNext() {
     return;
   }
 
-  var fi = pickIndex(files.length, lastFileIndex);
-  lastFileIndex = fi;
+  var fi = nextFileIndex();
+  if (fi < 0) return;
 
   var sp = pickSpeaker(elig);
   sendPosition(sp.x, sp.y, sp.z);
@@ -523,10 +526,37 @@ function randomGapMs() {
   return Math.round(lo + Math.random() * (hi - lo));
 }
 
-// tirage d'un index different du precedent
-function pickIndex(n, last) {
-  if (n <= 1) return 0;
-  var i = Math.floor(Math.random() * n);
-  if (i === last) i = (i + 1) % n;
-  return i;
+// ----- SAC MELANGE (chaque message une fois avant tout retour) -----
+// Reconstruit un passage complet : tous les index [0..files.length-1] dans un ordre
+// aleatoire (Fisher-Yates). Evite qu'un nouveau passage commence par le dernier message
+// joue (pas de repetition immediate a la jonction de deux passages).
+function buildPlayQueue() {
+  var idx = [];
+  for (var i = 0; i < files.length; i++) {
+    idx.push(i);
+  }
+  for (var i = idx.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = idx[i];
+    idx[i] = idx[j];
+    idx[j] = t;
+  }
+  if (idx.length > 1 && idx[0] === lastFileIndex) {
+    var t2 = idx[0];
+    idx[0] = idx[1];
+    idx[1] = t2;
+  }
+  playQueue = idx;
+}
+
+// Prochain index a jouer : on pioche dans le passage courant ; vide -> on re-melange tout.
+function nextFileIndex() {
+  if (files.length === 0) {
+    return -1;
+  }
+  if (playQueue.length === 0) {
+    buildPlayQueue();
+  }
+  lastFileIndex = playQueue.shift();
+  return lastFileIndex;
 }
